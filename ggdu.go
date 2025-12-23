@@ -201,9 +201,9 @@ func load(path string) (*Folder, error) {
 }
 
 func (f *Folder) getFiles() error {
-	cmd := []string{"gdrive", "files", "list", "--field-separator", delim}
+	cmd := []string{"gdrive", "files", "list", "--field-separator", delim, "--max", "300"}
 	if f.ID != "" {
-		cmd = append(cmd, "--query", "'"+f.ID+"' in parents")
+		cmd = append(cmd, "--parent", f.ID)
 	}
 
 	raw, err := sh(cmd...)
@@ -243,6 +243,8 @@ func (f *Folder) getFiles() error {
 
 		case "document":
 			// ignore it
+		case "shortcut":
+			// ignore that too
 
 		default:
 			panic("unknown type of file: " + parts[2])
