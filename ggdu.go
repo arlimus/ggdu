@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,6 +50,10 @@ type File struct {
 
 var tooOld = (time.Now().Add(-7 * 24 * time.Hour)).Unix()
 
+var log = func(msg string) {
+	fmt.Println(msg)
+}
+
 const savePath = "db.json"
 
 func main() {
@@ -63,12 +68,6 @@ func main() {
 		data = &Folder{}
 	}
 	data.path = "/"
-
-	data.ensureData()
-	// we picked one field that must definitely not be nil after a successful refresh, which might have happened
-	if data.folderIdx == nil {
-		data.rebuild(data.path)
-	}
 
 	startApp(data)
 }
@@ -85,27 +84,16 @@ func startApp(root *Folder) {
 		}
 		debug.SetText(strings.Join(debugTxt, "\n"))
 	}
+	log = debugMsg
 
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Check if the key pressed is the Escape key
-		if event.Key() == tcell.KeyEscape {
-			// Stop the application
-			app.Stop()
-			return nil // Stop event propagation
-		}
-		if event.Key() == tcell.KeyRune {
-			ch := event.Rune()
-			if ch == 'q' {
-				app.Stop()
-				return nil
-			}
-			if ch == 'x' {
-				debugMsg("try to explore this folder")
-				return nil
-			}
-		}
-		return event // Continue processing other events
-	})
+	root.ensureData()
+	// we picked one field that must definitely not be nil after a successful refresh, which might have happened
+	if root.folderIdx == nil {
+		root.rebuild(root.path)
+	}
+
+	curFolder := root
+	var listItems []*Folder
 
 	list := tview.NewList().ShowSecondaryText(false)
 
@@ -124,13 +112,47 @@ func startApp(root *Folder) {
 
 	var selectFn func(*Folder)
 	selectFn = func(f *Folder) {
-		f.ensureData()
-		f.explorer(list, selectFn)
+		curFolder = f
+		listItems = f.explorer(list, selectFn)
 		header.SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
 		debugMsg("rendered " + f.path)
 	}
 
-	selectFn(root)
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Check if the key pressed is the Escape key
+		if event.Key() == tcell.KeyEscape {
+			// Stop the application
+			app.Stop()
+			return nil // Stop event propagation
+		}
+		if event.Key() == tcell.KeyRune {
+			ch := event.Rune()
+			if ch == 'q' {
+				app.Stop()
+				return nil
+			}
+			if ch == 'x' {
+				i := list.GetCurrentItem()
+				if i >= len(listItems) {
+					return nil
+				}
+				folder := listItems[i]
+				if folder == nil {
+					return nil
+				}
+
+				go func() {
+					folder.ensureData()
+					selectFn(curFolder)
+				}()
+
+				return nil
+			}
+		}
+		return event // Continue processing other events
+	})
+
+	selectFn(curFolder)
 	app.SetRoot(grid, true).SetFocus(list)
 
 	if err := app.Run(); err != nil {
@@ -184,7 +206,7 @@ func (f *Folder) getFiles() error {
 		cmd = append(cmd, "--query", "'"+f.ID+"' in parents")
 	}
 
-	raw, err := sh(cmd...).Output()
+	raw, err := sh(cmd...)
 	if err != nil {
 		return err
 	}
@@ -220,7 +242,7 @@ func (f *Folder) getFiles() error {
 			})
 
 		case "document":
-			fmt.Println("\033[37m... ignore " + parts[1] + "\033[0m")
+			// ignore it
 
 		default:
 			panic("unknown type of file: " + parts[2])
@@ -232,9 +254,23 @@ func (f *Folder) getFiles() error {
 	return nil
 }
 
-func sh(parts ...string) *exec.Cmd {
-	fmt.Println("--- " + strings.Join(parts, " "))
-	return exec.Command(parts[0], parts[1:]...)
+func sh(parts ...string) (string, error) {
+	log("--- " + strings.Join(parts, " "))
+	cmd := exec.Command(parts[0], parts[1:]...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		return "", errors.New("failed to start command: " + err.Error())
+	}
+
+	if stderr.Len() > 0 {
+		log("ERROR: " + stderr.String())
+	}
+
+	return stdout.String(), nil
 }
 
 func parseSize(s string) int {
@@ -340,39 +376,46 @@ func (f *Folder) ensureData() {
 
 	oldSize := f.size
 
+	log("getting files...")
 	if err := f.getFiles(); err != nil {
 		panic(err)
 	}
+	log("saving...")
 	if err := f.save(); err != nil {
 		panic(err)
 	}
 
+	log("rebuilding idx...")
 	f.rebuild(f.path)
 
-	for parent := f.parent; parent != nil; parent = f.parent {
-		parent.size += (f.size - oldSize)
+	sizeChange := (f.size - oldSize)
+	for parent := f.parent; parent != nil; parent = parent.parent {
+		parent.size += sizeChange
 		parent.unknown -= 1
 		parent.known += 1
 	}
 }
 
-func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) {
+func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 	list.Clear()
 
 	sort.Slice(f.Folders, func(i, j int) bool {
 		a := f.Folders[i]
 		b := f.Folders[j]
 		if a.size != b.size {
-			return a.size < b.size
+			return a.size > b.size
 		}
 		return f.Folders[i].Name < f.Folders[j].Name
 	})
+
+	var res []*Folder
 
 	offset := 1
 	if f.parent != nil {
 		list.AddItem(fmt.Sprintf("%+8s %s %s", "", "", ".."),
 			"", ' ', func() { selectFn(f.parent) })
 		offset += 1
+		res = append(res, nil) // not a relevant child folder
 	}
 
 	for i := range f.Folders {
@@ -383,6 +426,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) {
 		}
 		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
 			"", ' ', func() { selectFn(folder) })
+		res = append(res, folder)
 		// list.SetCellSimple(i+offset, 0, formatSize(folder.size))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(folder.Name).SetTextColor(tcell.ColorBlue))
@@ -393,7 +437,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) {
 		a := f.Files[i]
 		b := f.Files[j]
 		if a.Size != b.Size {
-			return a.Size < b.Size
+			return a.Size > b.Size
 		}
 		return f.Files[i].Name < f.Files[j].Name
 	})
@@ -410,6 +454,8 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) {
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(file.Name).SetTextColor(tcell.ColorBlue))
 	}
+
+	return res
 }
 
 var progressRunes = []rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'}
