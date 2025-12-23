@@ -62,22 +62,29 @@ func main() {
 	} else {
 		data = &Folder{}
 	}
+	data.path = "/"
 
-	if data.LastUpdate < tooOld {
-		if err := data.getFiles(); err != nil {
-			panic(err)
-		}
-		if err = data.save(); err != nil {
-			panic(err)
-		}
+	data.ensureData()
+	// we picked one field that must definitely not be nil after a successful refresh, which might have happened
+	if data.folderIdx == nil {
+		data.rebuild(data.path)
 	}
 
-	data.rebuild("/")
 	startApp(data)
 }
 
 func startApp(root *Folder) {
 	app := tview.NewApplication()
+
+	debug := tview.NewTextView().SetTextAlign(tview.AlignLeft)
+	debugTxt := []string{}
+	debugMsg := func(msg string) {
+		debugTxt = append(debugTxt, msg)
+		if len(debugTxt) > 3 {
+			debugTxt = debugTxt[len(debugTxt)-3:]
+		}
+		debug.SetText(strings.Join(debugTxt, "\n"))
+	}
 
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		// Check if the key pressed is the Escape key
@@ -92,16 +99,39 @@ func startApp(root *Folder) {
 				app.Stop()
 				return nil
 			}
+			if ch == 'x' {
+				debugMsg("try to explore this folder")
+				return nil
+			}
 		}
 		return event // Continue processing other events
 	})
 
+	list := tview.NewList().ShowSecondaryText(false)
+
+	header := tview.NewTextView().
+		SetTextAlign(tview.AlignLeft)
+
+	grid := tview.NewGrid().
+		SetRows(1, 0, 3).
+		SetColumns(0).
+		AddItem(header, 0, 0, 1, 1, 0, 0, false).
+		AddItem(list, 1, 0, 1, 1, 0, 0, true).
+		AddItem(debug, 2, 0, 1, 1, 0, 0, false)
+
+	// box := tview.NewGrid().SetBorder(true).SetTitle("Explore " + f.path)
+	// box.Set
+
 	var selectFn func(*Folder)
 	selectFn = func(f *Folder) {
-		f.explorer(app, selectFn)
+		f.ensureData()
+		f.explorer(list, selectFn)
+		header.SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
+		debugMsg("rendered " + f.path)
 	}
 
-	root.explorer(app, selectFn)
+	selectFn(root)
+	app.SetRoot(grid, true).SetFocus(list)
 
 	if err := app.Run(); err != nil {
 		panic(err)
@@ -113,6 +143,10 @@ const delim = "^^^^^"
 var gdriveListHeader = strings.Join([]string{"Id", "Name", "Type", "Size", "Created"}, delim)
 
 func (f *Folder) save() error {
+	if f.parent != nil {
+		return f.parent.save()
+	}
+
 	res, err := json.Marshal(f)
 	if err != nil {
 		return err
@@ -299,8 +333,31 @@ func (f *Folder) rebuild(curPath string) {
 	}
 }
 
-func (f *Folder) explorer(app *tview.Application, selectFn func(*Folder)) {
-	list := tview.NewList().ShowSecondaryText(false)
+func (f *Folder) ensureData() {
+	if f.LastUpdate > tooOld {
+		return
+	}
+
+	oldSize := f.size
+
+	if err := f.getFiles(); err != nil {
+		panic(err)
+	}
+	if err := f.save(); err != nil {
+		panic(err)
+	}
+
+	f.rebuild(f.path)
+
+	for parent := f.parent; parent != nil; parent = f.parent {
+		parent.size += (f.size - oldSize)
+		parent.unknown -= 1
+		parent.known += 1
+	}
+}
+
+func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) {
+	list.Clear()
 
 	sort.Slice(f.Folders, func(i, j int) bool {
 		a := f.Folders[i]
@@ -320,13 +377,17 @@ func (f *Folder) explorer(app *tview.Application, selectFn func(*Folder)) {
 
 	for i := range f.Folders {
 		folder := f.Folders[i]
-		progress := float64(folder.size) / float64(f.size)
-		list.AddItem(fmt.Sprintf("%+8s %s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
+		var progress float64
+		if f.size >= 1 {
+			progress = float64(folder.size) / float64(f.size)
+		}
+		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
 			"", ' ', func() { selectFn(folder) })
 		// list.SetCellSimple(i+offset, 0, formatSize(folder.size))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(folder.Name).SetTextColor(tcell.ColorBlue))
 	}
+	offset += len(f.Folders)
 
 	sort.Slice(f.Files, func(i, j int) bool {
 		a := f.Files[i]
@@ -337,31 +398,18 @@ func (f *Folder) explorer(app *tview.Application, selectFn func(*Folder)) {
 		return f.Files[i].Name < f.Files[j].Name
 	})
 
-	offset += len(f.Folders)
 	for i := range f.Files {
 		file := f.Files[i]
-		progress := float64(file.Size) / float64(f.size)
-		list.AddItem(fmt.Sprintf("%+8s %s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
+		var progress float64
+		if f.size >= 1 {
+			progress = float64(file.Size) / float64(f.size)
+		}
+		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
 			"", ' ', nil)
 		// list.SetCellSimple(i+offset, 0, formatSize(int64(file.Size)))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(file.Name).SetTextColor(tcell.ColorBlue))
 	}
-
-	header := tview.NewTextView().
-		SetTextAlign(tview.AlignLeft).
-		SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
-
-	grid := tview.NewGrid().
-		SetRows(1, 0).
-		SetColumns(0).
-		AddItem(header, 0, 0, 1, 1, 0, 0, false).
-		AddItem(list, 1, 0, 1, 1, 0, 0, true)
-
-	// box := tview.NewGrid().SetBorder(true).SetTitle("Explore " + f.path)
-	// box.Set
-
-	app.SetRoot(grid, true).SetFocus(list)
 }
 
 var progressRunes = []rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'}
@@ -377,9 +425,14 @@ func progressbar(progress float64, width int) string {
 	for ; i < full; i++ {
 		res[i] = progressRunes[len(progressRunes)-1]
 	}
+	if i >= width {
+		return string(res)
+	}
 
 	rem := progress - float64(full)*segPct
-	idx := int(math.Round(rem / segPct * float64(len(progressRunes))))
+	idx := int(math.Round(
+		rem / segPct * float64(len(progressRunes)-1),
+	))
 	res[i] = progressRunes[idx]
 	i++
 
