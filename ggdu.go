@@ -35,7 +35,8 @@ type Folder struct {
 	unknown   int // aggregate unknown folders at this level
 	folderIdx map[string]*Folder
 	fileIdx   map[string]*File
-	path      string
+	path      string  // full path
+	parent    *Folder // two-way navigation
 }
 
 type File struct {
@@ -72,7 +73,39 @@ func main() {
 	}
 
 	data.rebuild("/")
-	data.explorer()
+	startApp(data)
+}
+
+func startApp(root *Folder) {
+	app := tview.NewApplication()
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Check if the key pressed is the Escape key
+		if event.Key() == tcell.KeyEscape {
+			// Stop the application
+			app.Stop()
+			return nil // Stop event propagation
+		}
+		if event.Key() == tcell.KeyRune {
+			ch := event.Rune()
+			if ch == 'q' {
+				app.Stop()
+				return nil
+			}
+		}
+		return event // Continue processing other events
+	})
+
+	var selectFn func(*Folder)
+	selectFn = func(f *Folder) {
+		f.explorer(app, selectFn)
+	}
+
+	root.explorer(app, selectFn)
+
+	if err := app.Run(); err != nil {
+		panic(err)
+	}
 }
 
 const delim = "^^^^^"
@@ -257,6 +290,7 @@ func (f *Folder) rebuild(curPath string) {
 		} else {
 			f.known += 1
 		}
+		folder.parent = f
 	}
 
 	for i := range f.Files {
@@ -265,26 +299,7 @@ func (f *Folder) rebuild(curPath string) {
 	}
 }
 
-func (f *Folder) explorer() {
-	app := tview.NewApplication()
-
-	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Check if the key pressed is the Escape key
-		if event.Key() == tcell.KeyEscape {
-			// Stop the application
-			app.Stop()
-			return nil // Stop event propagation
-		}
-		if event.Key() == tcell.KeyRune {
-			ch := event.Rune()
-			if ch == 'q' {
-				app.Stop()
-				return nil
-			}
-		}
-		return event // Continue processing other events
-	})
-
+func (f *Folder) explorer(app *tview.Application, selectFn func(*Folder)) {
 	list := tview.NewList().ShowSecondaryText(false)
 
 	sort.Slice(f.Folders, func(i, j int) bool {
@@ -297,11 +312,17 @@ func (f *Folder) explorer() {
 	})
 
 	offset := 1
+	if f.parent != nil {
+		list.AddItem(fmt.Sprintf("%+8s %s %s", "", "", ".."),
+			"", ' ', func() { selectFn(f.parent) })
+		offset += 1
+	}
+
 	for i := range f.Folders {
 		folder := f.Folders[i]
 		progress := float64(folder.size) / float64(f.size)
 		list.AddItem(fmt.Sprintf("%+8s %s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
-			"", ' ', nil)
+			"", ' ', func() { selectFn(folder) })
 		// list.SetCellSimple(i+offset, 0, formatSize(folder.size))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(folder.Name).SetTextColor(tcell.ColorBlue))
@@ -327,18 +348,6 @@ func (f *Folder) explorer() {
 		// list.SetCell(i+offset, 2, tview.NewTableCell(file.Name).SetTextColor(tcell.ColorBlue))
 	}
 
-	// list.Select(0, 0).SetFixed(1, 1).SetDoneFunc(func(key tcell.Key) {
-	// 	if key == tcell.KeyEscape || key == tcell.KeyRune {
-	// 		app.Stop()
-	// 	}
-	// 	if key == tcell.KeyEnter {
-	// 		list.SetSelectable(true, true)
-	// 	}
-	// }).SetSelectedFunc(func(row int, column int) {
-	// 	list.GetCell(row, column).SetTextColor(tcell.ColorRed)
-	// 	list.SetSelectable(false, false)
-	// })
-
 	header := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
 		SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
@@ -352,9 +361,7 @@ func (f *Folder) explorer() {
 	// box := tview.NewGrid().SetBorder(true).SetTitle("Explore " + f.path)
 	// box.Set
 
-	if err := app.SetRoot(grid, true).SetFocus(list).Run(); err != nil {
-		panic(err)
-	}
+	app.SetRoot(grid, true).SetFocus(list)
 }
 
 var progressRunes = []rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'}
