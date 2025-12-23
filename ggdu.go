@@ -4,13 +4,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -200,6 +203,34 @@ func parseSize(s string) int {
 	panic("Failed to parse as size: " + s)
 }
 
+func formatSize(i int64) string {
+	if i == 0 {
+		return ""
+	}
+
+	if i < 1024 {
+		return fmt.Sprintf("%d", i) + "b"
+	}
+
+	f := float32(i / 1024)
+	if f < 1024 {
+		return fmt.Sprintf("%.1fkb", f)
+	}
+
+	f = f / 1024
+	if f < 1024 {
+		return fmt.Sprintf("%.1fmb", f)
+	}
+
+	f = f / 1024
+	if f < 1024 {
+		return fmt.Sprintf("%.1fgb", f)
+	}
+
+	f = f / 1024
+	return fmt.Sprintf("%.1ftb", f)
+}
+
 func parseDate(s string) int64 {
 	time, err := time.Parse("2006-01-02 15:04:05", s)
 	if err != nil {
@@ -235,8 +266,119 @@ func (f *Folder) rebuild(curPath string) {
 }
 
 func (f *Folder) explorer() {
-	box := tview.NewBox().SetBorder(true).SetTitle("Explore " + f.path)
-	if err := tview.NewApplication().SetRoot(box, true).Run(); err != nil {
+	app := tview.NewApplication()
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Check if the key pressed is the Escape key
+		if event.Key() == tcell.KeyEscape {
+			// Stop the application
+			app.Stop()
+			return nil // Stop event propagation
+		}
+		if event.Key() == tcell.KeyRune {
+			ch := event.Rune()
+			if ch == 'q' {
+				app.Stop()
+				return nil
+			}
+		}
+		return event // Continue processing other events
+	})
+
+	list := tview.NewList().ShowSecondaryText(false)
+
+	sort.Slice(f.Folders, func(i, j int) bool {
+		a := f.Folders[i]
+		b := f.Folders[j]
+		if a.size != b.size {
+			return a.size < b.size
+		}
+		return f.Folders[i].Name < f.Folders[j].Name
+	})
+
+	offset := 1
+	for i := range f.Folders {
+		folder := f.Folders[i]
+		progress := float64(folder.size) / float64(f.size)
+		list.AddItem(fmt.Sprintf("%+8s %s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
+			"", ' ', nil)
+		// list.SetCellSimple(i+offset, 0, formatSize(folder.size))
+		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
+		// list.SetCell(i+offset, 2, tview.NewTableCell(folder.Name).SetTextColor(tcell.ColorBlue))
+	}
+
+	sort.Slice(f.Files, func(i, j int) bool {
+		a := f.Files[i]
+		b := f.Files[j]
+		if a.Size != b.Size {
+			return a.Size < b.Size
+		}
+		return f.Files[i].Name < f.Files[j].Name
+	})
+
+	offset += len(f.Folders)
+	for i := range f.Files {
+		file := f.Files[i]
+		progress := float64(file.Size) / float64(f.size)
+		list.AddItem(fmt.Sprintf("%+8s %s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
+			"", ' ', nil)
+		// list.SetCellSimple(i+offset, 0, formatSize(int64(file.Size)))
+		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
+		// list.SetCell(i+offset, 2, tview.NewTableCell(file.Name).SetTextColor(tcell.ColorBlue))
+	}
+
+	// list.Select(0, 0).SetFixed(1, 1).SetDoneFunc(func(key tcell.Key) {
+	// 	if key == tcell.KeyEscape || key == tcell.KeyRune {
+	// 		app.Stop()
+	// 	}
+	// 	if key == tcell.KeyEnter {
+	// 		list.SetSelectable(true, true)
+	// 	}
+	// }).SetSelectedFunc(func(row int, column int) {
+	// 	list.GetCell(row, column).SetTextColor(tcell.ColorRed)
+	// 	list.SetSelectable(false, false)
+	// })
+
+	header := tview.NewTextView().
+		SetTextAlign(tview.AlignLeft).
+		SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
+
+	grid := tview.NewGrid().
+		SetRows(1, 0).
+		SetColumns(0).
+		AddItem(header, 0, 0, 1, 1, 0, 0, false).
+		AddItem(list, 1, 0, 1, 1, 0, 0, true)
+
+	// box := tview.NewGrid().SetBorder(true).SetTitle("Explore " + f.path)
+	// box.Set
+
+	if err := app.SetRoot(grid, true).SetFocus(list).Run(); err != nil {
 		panic(err)
 	}
+}
+
+var progressRunes = []rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'}
+
+// progress: 0 - 1.0 (100%)
+// width: number of characters
+func progressbar(progress float64, width int) string {
+	var segPct = 1 / float64(width)
+	var full = int(math.Floor(progress / segPct))
+	var i = 0
+
+	res := make([]rune, width)
+	for ; i < full; i++ {
+		res[i] = progressRunes[len(progressRunes)-1]
+	}
+
+	rem := progress - float64(full)*segPct
+	idx := int(math.Round(rem / segPct * float64(len(progressRunes))))
+	res[i] = progressRunes[idx]
+	i++
+
+	for ; i < width; i++ {
+		res[i] = ' '
+	}
+
+	return string(res)
 }
