@@ -1,3 +1,6 @@
+// Copyright 2026 Christian Dominik Richter
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 package main
 
 import (
