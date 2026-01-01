@@ -86,7 +86,7 @@ func startApp(root *Folder) {
 	}
 	log = debugMsg
 
-	root.ensureData()
+	root.ensureData(false, nil)
 	// we picked one field that must definitely not be nil after a successful refresh, which might have happened
 	if root.folderIdx == nil {
 		root.rebuild(root.path)
@@ -119,19 +119,25 @@ func startApp(root *Folder) {
 	}
 
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		// Check if the key pressed is the Escape key
-		if event.Key() == tcell.KeyEscape {
-			// Stop the application
+		switch event.Key() {
+		case tcell.KeyEscape:
 			app.Stop()
-			return nil // Stop event propagation
-		}
-		if event.Key() == tcell.KeyRune {
+			return nil // stop propagation
+
+		case tcell.KeyF5:
+			go func() {
+				curFolder.ensureData(true, nil)
+				selectFn(curFolder)
+				app.Draw()
+			}()
+
+		case tcell.KeyRune:
 			ch := event.Rune()
 			if ch == 'q' {
 				app.Stop()
 				return nil
 			}
-			if ch == 'x' {
+			if ch == 'l' || ch == 'x' {
 				i := list.GetCurrentItem()
 				if i >= len(listItems) {
 					return nil
@@ -141,9 +147,23 @@ func startApp(root *Folder) {
 					return nil
 				}
 
+				var deep *goDeep
+				if ch == 'x' {
+					deep = &goDeep{max: 1, cur: 0, onUpdate: func(cur *Folder) {
+						for ; cur != nil; cur = cur.parent {
+							if cur == curFolder {
+								selectFn(cur)
+								break
+							}
+						}
+						app.Draw()
+					}}
+				}
+
 				go func() {
-					folder.ensureData()
+					folder.ensureData(false, deep)
 					selectFn(curFolder)
+					app.Draw()
 				}()
 
 				return nil
@@ -371,24 +391,41 @@ func (f *Folder) rebuild(curPath string) {
 	}
 }
 
-func (f *Folder) ensureData() {
-	if f.LastUpdate > tooOld {
+type goDeep struct {
+	max      int
+	cur      int
+	onUpdate func(f *Folder)
+}
+
+func (f *Folder) ensureData(forceUpdate bool, goDeep *goDeep) {
+	if !forceUpdate && f.LastUpdate > tooOld {
 		return
 	}
 
 	oldSize := f.size
 
-	log("getting files...")
 	if err := f.getFiles(); err != nil {
 		panic(err)
 	}
-	log("saving...")
 	if err := f.save(); err != nil {
 		panic(err)
 	}
 
-	log("rebuilding idx...")
-	f.rebuild(f.path)
+	if goDeep != nil {
+		goDeep.max += len(f.Folders)
+
+		for i := range f.Folders {
+			folder := f.Folders[i]
+			folder.ensureData(forceUpdate, goDeep)
+			f.rebuild(f.path)
+		}
+		goDeep.cur += 1
+		log(fmt.Sprintf("progress: %s %d/%d", progressbar(float64(goDeep.cur)/float64(goDeep.max), 30), goDeep.cur, goDeep.max))
+
+	} else {
+		log("rebuilding idx...")
+		f.rebuild(f.path)
+	}
 
 	sizeChange := (f.size - oldSize)
 	for parent := f.parent; parent != nil; parent = parent.parent {
