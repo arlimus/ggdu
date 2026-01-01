@@ -41,6 +41,7 @@ type Folder struct {
 	fileIdx   map[string]*File
 	path      string  // full path
 	parent    *Folder // two-way navigation
+	save      func() error
 }
 
 type File struct {
@@ -89,6 +90,9 @@ func startApp(root *Folder) {
 	}
 	log = debugMsg
 
+	root.save = func() error {
+		return save(root)
+	}
 	root.ensureData(false, nil)
 	// we picked one field that must definitely not be nil after a successful refresh, which might have happened
 	if root.folderIdx == nil {
@@ -187,12 +191,8 @@ const delim = "^^^^^"
 
 var gdriveListHeader = strings.Join([]string{"Id", "Name", "Type", "Size", "Created"}, delim)
 
-func (f *Folder) save() error {
-	if f.parent != nil {
-		return f.parent.save()
-	}
-
-	res, err := json.Marshal(f)
+func save(root *Folder) error {
+	res, err := json.Marshal(root)
 	if err != nil {
 		return err
 	}
@@ -220,6 +220,17 @@ func load(path string) (*Folder, error) {
 
 	res := Folder{}
 	err = json.Unmarshal(raw, &res)
+
+	all := []*Folder{&res}
+	for i := 0; i < len(all); i++ {
+		cur := all[i]
+		all = append(all, cur.Folders...)
+		cur.save = func() error {
+			return save(&res)
+		}
+	}
+	res.rebuild("/")
+
 	return &res, err
 }
 
@@ -262,6 +273,7 @@ func (f *Folder) getFiles() error {
 				ID:   parts[0],
 				Name: parts[1],
 				Date: parseDate(parts[4]),
+				save: f.save,
 			})
 
 		case "document":
@@ -409,6 +421,9 @@ func (f *Folder) ensureData(forceUpdate bool, goDeep *goDeep) {
 
 	if err := f.getFiles(); err != nil {
 		panic(err)
+	}
+	if f.save == nil {
+		panic("Reached a folder without a save function: " + f.path)
 	}
 	if err := f.save(); err != nil {
 		panic(err)
