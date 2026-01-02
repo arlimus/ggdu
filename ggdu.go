@@ -316,8 +316,10 @@ func try_dedupe(folder *Folder) {
 	}
 }
 
+const MAX_COUNT = 500
+
 func (f *Folder) getFiles() error {
-	cmd := []string{"gdrive", "files", "list", "--field-separator", delim, "--max", "300"}
+	cmd := []string{"gdrive", "files", "list", "--field-separator", delim, "--max", strconv.Itoa(MAX_COUNT)}
 	if f.ID != "" {
 		cmd = append(cmd, "--parent", f.ID)
 	}
@@ -552,7 +554,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 
 	offset := 1
 	if f.parent != nil {
-		list.AddItem(fmt.Sprintf("%+8s %s %s", "", "", ".."),
+		list.AddItem(fmt.Sprintf("%+8s %s [blue]%s", "", "", ".."),
 			"", 0, func() {
 				f.lastIdx = list.GetCurrentItem()
 				selectFn(f.parent)
@@ -567,7 +569,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 		if f.size >= 1 {
 			progress = float64(folder.size) / float64(f.size)
 		}
-		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
+		list.AddItem(fmt.Sprintf("[orange]%+8s [white]%10s [blue]%s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
 			"", 0, func() {
 				f.lastIdx = list.GetCurrentItem()
 				selectFn(folder)
@@ -594,7 +596,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 		if f.size >= 1 {
 			progress = float64(file.Size) / float64(f.size)
 		}
-		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
+		list.AddItem(fmt.Sprintf("[orange]%+8s [white]%10s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
 			"", 0, nil)
 		// list.SetCellSimple(i+offset, 0, formatSize(int64(file.Size)))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
