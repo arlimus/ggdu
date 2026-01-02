@@ -108,6 +108,15 @@ func startApp(root *Folder) {
 	var listItems []*Folder
 
 	list := tview.NewList().ShowSecondaryText(false)
+	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Rune() {
+		case 'k':
+			return tcell.NewEventKey(tcell.KeyUp, ' ', tcell.ModNone)
+		case 'j':
+			return tcell.NewEventKey(tcell.KeyDown, ' ', tcell.ModNone)
+		}
+		return event
+	})
 
 	header := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft)
