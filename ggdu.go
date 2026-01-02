@@ -53,7 +53,8 @@ type File struct {
 	Date int64
 }
 
-var tooOld = (time.Now().Add(-7 * 24 * time.Hour)).Unix()
+var refreshDelay = 24 * time.Hour
+var tooOld = (time.Now().Add(-refreshDelay)).Unix()
 
 var log = func(msg string) {
 	fmt.Println(msg)
@@ -90,6 +91,9 @@ func startApp(root *Folder) {
 		debug.SetText(strings.Join(debugTxt, "\n"))
 	}
 	log = debugMsg
+	debugMsg("Keys: l = load the folder, x = recursively load everything in a folder, F5 = refresh")
+	debugMsg("Temporary cache is stored in: " + savePath)
+	debugMsg("By default fetch data only every " + refreshDelay.String() + " (override with f+l or f+x)")
 
 	root.save = func() error {
 		return save(root)
@@ -172,7 +176,7 @@ func startApp(root *Folder) {
 				}
 
 				go func() {
-					msg := "ensure data on " + folder.path
+					msg := "load " + folder.path
 					if forceMode {
 						msg += " (force refresh)"
 					}
