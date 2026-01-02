@@ -147,12 +147,12 @@ func startApp(root *Folder) {
 			app.Stop()
 			return nil // stop propagation
 
-		case tcell.KeyF5:
-			go func() {
-				curFolder.ensureData(true, nil)
-				selectFn(curFolder)
-				app.Draw()
-			}()
+		// case tcell.KeyF5:
+		// 	go func() {
+		// 		curFolder.ensureData(true, nil)
+		// 		selectFn(curFolder)
+		// 		app.Draw()
+		// 	}()
 
 		case tcell.KeyRune:
 			ch := event.Rune()
@@ -261,59 +261,7 @@ func load(path string) (*Folder, error) {
 	}
 	res.rebuild("/")
 
-	// TODO: temporary fix for duplication in some older catche files
-	// remove after a while
-	try_dedupe(&res)
-
 	return &res, err
-}
-
-func try_dedupe(folder *Folder) {
-	fidx := map[string]*File{}
-	for i := range folder.Files {
-		file := folder.Files[i]
-
-		existing, ok := fidx[file.Name]
-		if !ok {
-			fidx[file.Name] = file
-			continue
-		}
-
-		if existing.Date < file.Date {
-			fidx[file.Name] = file
-		}
-	}
-	folder.Files = make([]*File, len(fidx))
-	i := 0
-	for _, c := range fidx {
-		folder.Files[i] = c
-		i++
-	}
-
-	didx := map[string]*Folder{}
-	for i := range folder.Folders {
-		folder := folder.Folders[i]
-
-		existing, ok := didx[folder.Name]
-		if !ok {
-			didx[folder.Name] = folder
-			continue
-		}
-
-		if (len(existing.Files) == 0 && len(existing.Folders) == 0) || (existing.Date < folder.Date) {
-			didx[folder.Name] = folder
-		}
-	}
-	folder.Folders = make([]*Folder, len(didx))
-	i = 0
-	for _, c := range didx {
-		folder.Folders[i] = c
-		i++
-	}
-
-	for i := range folder.Folders {
-		try_dedupe(folder.Folders[i])
-	}
 }
 
 const MAX_COUNT = 500
@@ -569,7 +517,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 		if f.size >= 1 {
 			progress = float64(folder.size) / float64(f.size)
 		}
-		list.AddItem(fmt.Sprintf("[orange]%+8s [white]%10s [blue]%s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
+		list.AddItem(fmt.Sprintf("[orange::b]%+8s [white]%10s [blue::b]%s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
 			"", 0, func() {
 				f.lastIdx = list.GetCurrentItem()
 				selectFn(folder)
@@ -596,7 +544,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 		if f.size >= 1 {
 			progress = float64(file.Size) / float64(f.size)
 		}
-		list.AddItem(fmt.Sprintf("[orange]%+8s [white]%10s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
+		list.AddItem(fmt.Sprintf("[orange::b]%+8s [white]%10s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
 			"", 0, nil)
 		// list.SetCellSimple(i+offset, 0, formatSize(int64(file.Size)))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
