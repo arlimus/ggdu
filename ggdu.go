@@ -261,7 +261,59 @@ func load(path string) (*Folder, error) {
 	}
 	res.rebuild("/")
 
+	// TODO: temporary fix for duplication in some older catche files
+	// remove after a while
+	try_dedupe(&res)
+
 	return &res, err
+}
+
+func try_dedupe(folder *Folder) {
+	fidx := map[string]*File{}
+	for i := range folder.Files {
+		file := folder.Files[i]
+
+		existing, ok := fidx[file.Name]
+		if !ok {
+			fidx[file.Name] = file
+			continue
+		}
+
+		if existing.Date < file.Date {
+			fidx[file.Name] = file
+		}
+	}
+	folder.Files = make([]*File, len(fidx))
+	i := 0
+	for _, c := range fidx {
+		folder.Files[i] = c
+		i++
+	}
+
+	didx := map[string]*Folder{}
+	for i := range folder.Folders {
+		folder := folder.Folders[i]
+
+		existing, ok := didx[folder.Name]
+		if !ok {
+			didx[folder.Name] = folder
+			continue
+		}
+
+		if (len(existing.Files) == 0 && len(existing.Folders) == 0) || (existing.Date < folder.Date) {
+			didx[folder.Name] = folder
+		}
+	}
+	folder.Folders = make([]*Folder, len(didx))
+	i = 0
+	for _, c := range didx {
+		folder.Folders[i] = c
+		i++
+	}
+
+	for i := range folder.Folders {
+		try_dedupe(folder.Folders[i])
+	}
 }
 
 func (f *Folder) getFiles() error {
@@ -501,7 +553,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 	offset := 1
 	if f.parent != nil {
 		list.AddItem(fmt.Sprintf("%+8s %s %s", "", "", ".."),
-			"", ' ', func() {
+			"", 0, func() {
 				f.lastIdx = list.GetCurrentItem()
 				selectFn(f.parent)
 			})
