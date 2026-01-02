@@ -516,7 +516,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 			progress = float64(folder.size) / float64(f.size)
 		}
 		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
-			"", ' ', func() {
+			"", 0, func() {
 				f.lastIdx = list.GetCurrentItem()
 				selectFn(folder)
 			})
@@ -543,7 +543,7 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 			progress = float64(file.Size) / float64(f.size)
 		}
 		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
-			"", ' ', nil)
+			"", 0, nil)
 		// list.SetCellSimple(i+offset, 0, formatSize(int64(file.Size)))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(file.Name).SetTextColor(tcell.ColorBlue))
