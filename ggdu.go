@@ -42,6 +42,7 @@ type Folder struct {
 	path      string  // full path
 	parent    *Folder // two-way navigation
 	save      func() error
+	lastIdx   int
 }
 
 type File struct {
@@ -487,7 +488,10 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 	offset := 1
 	if f.parent != nil {
 		list.AddItem(fmt.Sprintf("%+8s %s %s", "", "", ".."),
-			"", ' ', func() { selectFn(f.parent) })
+			"", ' ', func() {
+				f.lastIdx = list.GetCurrentItem()
+				selectFn(f.parent)
+			})
 		offset += 1
 		res = append(res, nil) // not a relevant child folder
 	}
@@ -499,7 +503,10 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 			progress = float64(folder.size) / float64(f.size)
 		}
 		list.AddItem(fmt.Sprintf("%+8s %10s %s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
-			"", ' ', func() { selectFn(folder) })
+			"", ' ', func() {
+				f.lastIdx = list.GetCurrentItem()
+				selectFn(folder)
+			})
 		res = append(res, folder)
 		// list.SetCellSimple(i+offset, 0, formatSize(folder.size))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
@@ -528,6 +535,13 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(file.Name).SetTextColor(tcell.ColorBlue))
 	}
+
+	max := list.GetItemCount()
+	last := f.lastIdx
+	if max < last {
+		last = max - 1
+	}
+	list.SetCurrentItem(last)
 
 	return res
 }
