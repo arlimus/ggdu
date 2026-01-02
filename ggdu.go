@@ -21,6 +21,29 @@ import (
 	"github.com/rivo/tview"
 )
 
+var logFile = ""
+
+type LOG_LEVEL byte
+
+const (
+	DEBUG LOG_LEVEL = iota
+	INFO
+	ERROR
+)
+
+func init() {
+	// // uncomment to log everything
+	// logFile = ".ggdu.log"
+
+	if logFile != "" {
+		file, err := os.Create(logFile)
+		if err != nil {
+			panic("cannot write logs: " + err.Error())
+		}
+		file.Close()
+	}
+}
+
 type db struct {
 	root *Folder
 }
@@ -56,7 +79,7 @@ type File struct {
 var refreshDelay = 24 * time.Hour
 var tooOld = (time.Now().Add(-refreshDelay)).Unix()
 
-var log = func(msg string) {
+var log = func(msg string, level LOG_LEVEL) {
 	fmt.Println(msg)
 }
 
@@ -83,7 +106,19 @@ func startApp(root *Folder) {
 
 	debug := tview.NewTextView().SetTextAlign(tview.AlignLeft)
 	debugTxt := []string{}
-	debugMsg := func(msg string) {
+	debugMsg := func(msg string, level LOG_LEVEL) {
+		if logFile != "" {
+			f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+			if err == nil {
+				f.WriteString(msg)
+				f.Write([]byte{'\n'})
+				f.Close()
+			}
+		}
+
+		if level < INFO {
+			return
+		}
 		debugTxt = append(debugTxt, msg)
 		if len(debugTxt) > 3 {
 			debugTxt = debugTxt[len(debugTxt)-3:]
@@ -91,9 +126,9 @@ func startApp(root *Folder) {
 		debug.SetText(strings.Join(debugTxt, "\n"))
 	}
 	log = debugMsg
-	debugMsg("Keys: l = load the folder, x = recursively load everything in a folder, F5 = refresh")
-	debugMsg("Temporary cache is stored in: " + savePath)
-	debugMsg("By default fetch data only every " + refreshDelay.String() + " (override with f+l or f+x)")
+	debugMsg("Keys: l = load the folder, x = recursively load everything in a folder, F5 = refresh", INFO)
+	debugMsg("Temporary cache is stored in: "+savePath, INFO)
+	debugMsg("By default fetch data only every "+refreshDelay.String()+" (override with f+l or f+x)", INFO)
 
 	root.save = func() error {
 		return save(root)
@@ -101,7 +136,7 @@ func startApp(root *Folder) {
 	root.ensureData(false, nil)
 	// we picked one field that must definitely not be nil after a successful refresh, which might have happened
 	if root.folderIdx == nil {
-		root.rebuild(root.path)
+		root.rebuild()
 	}
 
 	curFolder := root
@@ -189,9 +224,14 @@ func startApp(root *Folder) {
 					if forceMode {
 						msg += " (force refresh)"
 					}
-					log(msg)
+					log(msg, INFO)
 
 					folder.ensureData(forceMode, deep)
+
+					if deep != nil {
+						log("all done for "+folder.path, INFO)
+					}
+
 					selectFn(curFolder)
 					app.Draw()
 				}()
@@ -259,7 +299,8 @@ func load(path string) (*Folder, error) {
 			return save(&res)
 		}
 	}
-	res.rebuild("/")
+	res.path = "/"
+	res.rebuild()
 
 	return &res, err
 }
@@ -324,7 +365,7 @@ func (f *Folder) getFiles() error {
 }
 
 func sh(parts ...string) (string, error) {
-	log("--- " + strings.Join(parts, " "))
+	log("sh> "+strings.Join(parts, " "), DEBUG)
 	cmd := exec.Command(parts[0], parts[1:]...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -336,7 +377,7 @@ func sh(parts ...string) (string, error) {
 	}
 
 	if stderr.Len() > 0 {
-		log("ERROR: " + stderr.String())
+		log("ERROR: "+stderr.String(), ERROR)
 	}
 
 	return stdout.String(), nil
@@ -411,17 +452,17 @@ func parseDate(s string) int64 {
 	return time.Unix()
 }
 
-func (f *Folder) rebuild(curPath string) {
+func (f *Folder) rebuild() {
 	f.size = 0
 	f.folderIdx = map[string]*Folder{}
 	f.fileIdx = map[string]*File{}
 	f.unknown = 0
 	f.known = 0
-	f.path = curPath
 
 	for i := range f.Folders {
 		folder := f.Folders[i]
-		folder.rebuild(filepath.Join(curPath, folder.Name))
+		f.attachChild(folder)
+		folder.rebuild()
 		f.folderIdx[folder.Name] = folder
 		f.size += folder.size
 		if folder.LastUpdate < tooOld {
@@ -429,7 +470,6 @@ func (f *Folder) rebuild(curPath string) {
 		} else {
 			f.known += 1
 		}
-		folder.parent = f
 	}
 
 	for i := range f.Files {
@@ -466,16 +506,25 @@ func (f *Folder) ensureData(forceUpdate bool, goDeep *goDeep) {
 
 		for i := range f.Folders {
 			folder := f.Folders[i]
+			f.attachChild(folder)
 			folder.ensureData(forceUpdate, goDeep)
-			f.rebuild(f.path)
+			f.rebuild()
 			goDeep.onUpdate(f)
 		}
+		// otherwise it never gets rebuilt vv
+		if len(f.Folders) == 0 {
+			f.rebuild()
+		}
+
 		goDeep.cur += 1
-		log(fmt.Sprintf("progress: %s %d/%d", progressbar(float64(goDeep.cur)/float64(goDeep.max), 30), goDeep.cur, goDeep.max))
+		if f.path == "" {
+			log(fmt.Sprintf("empty path on entry: %#v", f), DEBUG)
+		}
+		log(fmt.Sprintf("progress: %s %d/%d %s", progressbar(float64(goDeep.cur)/float64(goDeep.max), 30), goDeep.cur, goDeep.max, f.path), INFO)
 
 	} else {
-		log("rebuilding idx...")
-		f.rebuild(f.path)
+		log("rebuilding idx...", DEBUG)
+		f.rebuild()
 	}
 
 	sizeChange := (f.size - oldSize)
@@ -486,19 +535,26 @@ func (f *Folder) ensureData(forceUpdate bool, goDeep *goDeep) {
 	}
 }
 
+func (f *Folder) attachChild(child *Folder) {
+	child.parent = f
+	child.path = filepath.Join(f.path, f.Name)
+}
+
 func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 	list.Clear()
 
-	sort.Slice(f.Folders, func(i, j int) bool {
-		a := f.Folders[i]
-		b := f.Folders[j]
+	// we need a copy so we can sort it without breaking
+	res := make([]*Folder, len(f.Folders))
+	copy(res, f.Folders)
+
+	sort.Slice(res, func(i, j int) bool {
+		a := res[i]
+		b := res[j]
 		if a.size != b.size {
 			return a.size > b.size
 		}
-		return f.Folders[i].Name < f.Folders[j].Name
+		return res[i].Name < res[j].Name
 	})
-
-	var res []*Folder
 
 	offset := 1
 	if f.parent != nil {
@@ -508,11 +564,10 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 				selectFn(f.parent)
 			})
 		offset += 1
-		res = append(res, nil) // not a relevant child folder
 	}
 
-	for i := range f.Folders {
-		folder := f.Folders[i]
+	for i := range res {
+		folder := res[i]
 		var progress float64
 		if f.size >= 1 {
 			progress = float64(folder.size) / float64(f.size)
@@ -527,19 +582,21 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(folder.Name).SetTextColor(tcell.ColorBlue))
 	}
-	offset += len(f.Folders)
+	offset += len(res)
 
-	sort.Slice(f.Files, func(i, j int) bool {
-		a := f.Files[i]
-		b := f.Files[j]
+	files := make([]*File, len(f.Files))
+	copy(files, f.Files)
+	sort.Slice(files, func(i, j int) bool {
+		a := files[i]
+		b := files[j]
 		if a.Size != b.Size {
 			return a.Size > b.Size
 		}
-		return f.Files[i].Name < f.Files[j].Name
+		return files[i].Name < files[j].Name
 	})
 
-	for i := range f.Files {
-		file := f.Files[i]
+	for i := range files {
+		file := files[i]
 		var progress float64
 		if f.size >= 1 {
 			progress = float64(file.Size) / float64(f.size)
