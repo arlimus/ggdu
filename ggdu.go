@@ -122,8 +122,10 @@ func startApp(root *Folder) {
 		curFolder = f
 		listItems = f.explorer(list, selectFn)
 		header.SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
-		debugMsg("rendered " + f.path)
+		// debugMsg("rendered " + f.path)
 	}
+
+	var forceMode = false
 
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
@@ -144,6 +146,7 @@ func startApp(root *Folder) {
 				app.Stop()
 				return nil
 			}
+
 			if ch == 'l' || ch == 'x' {
 				i := list.GetCurrentItem()
 				if i >= len(listItems) {
@@ -168,13 +171,26 @@ func startApp(root *Folder) {
 				}
 
 				go func() {
-					folder.ensureData(false, deep)
+					msg := "ensure data on " + folder.path
+					if forceMode {
+						msg += " (force refresh)"
+					}
+					log(msg)
+
+					folder.ensureData(forceMode, deep)
 					selectFn(curFolder)
 					app.Draw()
 				}()
 
 				return nil
 			}
+
+			if ch == 'f' {
+				forceMode = true
+			} else {
+				forceMode = false
+			}
+
 		}
 		return event // Continue processing other events
 	})
@@ -183,7 +199,7 @@ func startApp(root *Folder) {
 	app.SetRoot(grid, true).SetFocus(list)
 
 	if err := app.Run(); err != nil {
-		panic(err)
+		fmt.Println(err)
 	}
 }
 
@@ -436,6 +452,7 @@ func (f *Folder) ensureData(forceUpdate bool, goDeep *goDeep) {
 			folder := f.Folders[i]
 			folder.ensureData(forceUpdate, goDeep)
 			f.rebuild(f.path)
+			goDeep.onUpdate(f)
 		}
 		goDeep.cur += 1
 		log(fmt.Sprintf("progress: %s %d/%d", progressbar(float64(goDeep.cur)/float64(goDeep.max), 30), goDeep.cur, goDeep.max))
@@ -525,7 +542,7 @@ func progressbar(progress float64, width int) string {
 	var i = 0
 
 	res := make([]rune, width)
-	for ; i < full; i++ {
+	for ; i < full && i < width; i++ {
 		res[i] = progressRunes[len(progressRunes)-1]
 	}
 	if i >= width {
@@ -536,6 +553,9 @@ func progressbar(progress float64, width int) string {
 	idx := int(math.Round(
 		rem / segPct * float64(len(progressRunes)-1),
 	))
+	if idx >= len(progressRunes) {
+		panic(fmt.Sprintf("trying to access a rune that's above max: rem=%f segPct=%f and idx=%d", rem, segPct, idx))
+	}
 	res[i] = progressRunes[idx]
 	i++
 
