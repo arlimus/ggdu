@@ -171,7 +171,8 @@ func startApp(root *Folder) {
 		folderChanged := f != curFolder
 		curFolder = f
 		listItems = f.explorer(list, folderChanged, selectFn)
-		header.SetText("--- " + filepath.Join(f.path, f.Name) + " (" + formatSize(f.size) + ") ---")
+		title := tview.Escape(filepath.Join(f.path, f.Name))
+		header.SetText("--- " + title + " (" + formatSize(f.size) + ") ---")
 		// debugMsg("rendered " + f.path)
 	}
 
@@ -581,11 +582,15 @@ func (f *Folder) explorer(list *tview.List, folderChanged bool, selectFn func(*F
 		if f.size >= 1 {
 			progress = float64(folder.size) / float64(f.size)
 		}
-		list.AddItem(fmt.Sprintf("[orange::b]%+8s [white]%10s [blue::b]%s", formatSize(folder.size), progressbar(progress, 10), folder.Name+"/"),
-			"", 0, func() {
-				f.lastIdx = list.GetCurrentItem()
-				selectFn(folder)
-			})
+		text := fmt.Sprintf("[orange::b]%+8s [white]%10s [blue::b]%s",
+			formatSize(folder.size),
+			progressbar(progress, 10),
+			tview.Escape(folder.Name+"/"),
+		)
+		list.AddItem(text, "", 0, func() {
+			f.lastIdx = list.GetCurrentItem()
+			selectFn(folder)
+		})
 		res = append(res, folder)
 		// list.SetCellSimple(i+offset, 0, formatSize(folder.size))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
@@ -610,8 +615,12 @@ func (f *Folder) explorer(list *tview.List, folderChanged bool, selectFn func(*F
 		if f.size >= 1 {
 			progress = float64(file.Size) / float64(f.size)
 		}
-		list.AddItem(fmt.Sprintf("[orange::b]%+8s [white]%10s %s", formatSize(int64(file.Size)), progressbar(progress, 10), file.Name),
-			"", 0, nil)
+		text := fmt.Sprintf("[orange::b]%+8s [white]%10s %s",
+			formatSize(int64(file.Size)),
+			progressbar(progress, 10),
+			tview.Escape(file.Name),
+		)
+		list.AddItem(text, "", 0, nil)
 		// list.SetCellSimple(i+offset, 0, formatSize(int64(file.Size)))
 		// list.SetCellSimple(i+offset, 1, progressbar(progress, 10))
 		// list.SetCell(i+offset, 2, tview.NewTableCell(file.Name).SetTextColor(tcell.ColorBlue))
