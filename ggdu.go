@@ -171,7 +171,7 @@ func startApp(root *Folder) {
 		folderChanged := f != curFolder
 		curFolder = f
 		listItems = f.explorer(list, folderChanged, selectFn)
-		header.SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
+		header.SetText("--- " + filepath.Join(f.path, f.Name) + " (" + formatSize(f.size) + ") ---")
 		// debugMsg("rendered " + f.path)
 	}
 
