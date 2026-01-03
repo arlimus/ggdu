@@ -168,8 +168,9 @@ func startApp(root *Folder) {
 
 	var selectFn func(*Folder)
 	selectFn = func(f *Folder) {
+		folderChanged := f != curFolder
 		curFolder = f
-		listItems = f.explorer(list, selectFn)
+		listItems = f.explorer(list, folderChanged, selectFn)
 		header.SetText("--- " + f.path + " (" + formatSize(f.size) + ") ---")
 		// debugMsg("rendered " + f.path)
 	}
@@ -540,7 +541,15 @@ func (f *Folder) attachChild(child *Folder) {
 	child.path = filepath.Join(f.path, f.Name)
 }
 
-func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
+func (f *Folder) explorer(list *tview.List, folderChanged bool, selectFn func(*Folder)) []*Folder {
+	// position in the list, either where we are if it's a refresh, or where we were last in this folder
+	var last int
+	if folderChanged {
+		last = f.lastIdx
+	} else {
+		last = list.GetCurrentItem()
+	}
+
 	list.Clear()
 
 	// we need a copy so we can sort it without breaking
@@ -609,7 +618,6 @@ func (f *Folder) explorer(list *tview.List, selectFn func(*Folder)) []*Folder {
 	}
 
 	max := list.GetItemCount()
-	last := f.lastIdx
 	if max < last {
 		last = max - 1
 	}
