@@ -126,7 +126,7 @@ func startApp(root *Folder) {
 		debug.SetText(strings.Join(debugTxt, "\n"))
 	}
 	log = debugMsg
-	debugMsg("Keys: l = load the folder, x = recursively load everything in a folder, F5 = refresh", INFO)
+	debugMsg("Keys: l = load the folder, x = recursively load everything in a folder, F5 = refresh, esc = up one level (exits at the top)", INFO)
 	debugMsg("Temporary cache is stored in: "+savePath, INFO)
 	debugMsg("By default fetch data only every "+refreshDelay.String()+" (override with f+l or f+x)", INFO)
 
@@ -181,7 +181,13 @@ func startApp(root *Folder) {
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyEscape:
-			app.Stop()
+			// go up one level; on the top level it exits
+			if curFolder.parent != nil {
+				curFolder.lastIdx = list.GetCurrentItem()
+				selectFn(curFolder.parent)
+			} else {
+				app.Stop()
+			}
 			return nil // stop propagation
 
 		// case tcell.KeyF5:
@@ -326,6 +332,14 @@ func (f *Folder) getFiles() error {
 		return errors.New("Unexpected header in gdrive list: " + header)
 	}
 
+	// preserve cached subfolder state across refresh by matching on ID
+	oldFolders := make(map[string]*Folder, len(f.Folders))
+	for _, folder := range f.Folders {
+		oldFolders[folder.ID] = folder
+	}
+	f.Folders = nil
+	f.Files = nil
+
 	for i := 1; i < len(lines); i++ {
 		line := lines[i]
 		if line == "" {
@@ -344,12 +358,19 @@ func (f *Folder) getFiles() error {
 			})
 
 		case "folder":
-			f.Folders = append(f.Folders, &Folder{
-				ID:   parts[0],
-				Name: parts[1],
-				Date: parseDate(parts[4]),
-				save: f.save,
-			})
+			if existing, ok := oldFolders[parts[0]]; ok {
+				existing.Name = parts[1]
+				existing.Date = parseDate(parts[4])
+				existing.save = f.save
+				f.Folders = append(f.Folders, existing)
+			} else {
+				f.Folders = append(f.Folders, &Folder{
+					ID:   parts[0],
+					Name: parts[1],
+					Date: parseDate(parts[4]),
+					save: f.save,
+				})
+			}
 
 		case "document":
 			// ignore it
